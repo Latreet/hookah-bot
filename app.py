@@ -111,22 +111,15 @@ async def fetch_last_orders(limit: int = 10):
 # ---------------- Клавиатуры ----------------
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💨 Кейтеринг кальяна", callback_data="start:cat")],
-        [InlineKeyboardButton(text="📦 Аренда кальяна",    callback_data="start:rent")],
-        [InlineKeyboardButton(text="💰 Стоимость услуг",   callback_data="info:prices")],
+        [InlineKeyboardButton(text="💨 Кальянный кейтеринг", callback_data="start:cat")],
+        [InlineKeyboardButton(text="📦 Аренда кальяна",      callback_data="start:rent")],
+        [InlineKeyboardButton(text="💰 Стоимость услуг",     callback_data="info:prices")],
     ])
 
 def nav_kb() -> InlineKeyboardMarkup:
-    """Кнопки навигации для текстовых шагов."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◀️ Назад",         callback_data="back")],
         [InlineKeyboardButton(text="🏠 Главное меню",  callback_data="main_menu")],
-    ])
-
-def nav_only_main() -> InlineKeyboardMarkup:
-    """Только «Главное меню» — для первого шага."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
     ])
 
 def count_kb(prefix: str, has_back: bool = True, max_count: int = 10) -> InlineKeyboardMarkup:
@@ -155,6 +148,11 @@ def phone_kb() -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
         resize_keyboard=True, one_time_keyboard=True,
     )
+
+def final_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+    ])
 
 # ---------------- Общие команды ----------------
 @dp.message(CommandStart())
@@ -199,7 +197,6 @@ async def cmd_orders(message: Message):
 @dp.callback_query(F.data == "main_menu")
 async def cb_main_menu(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    # Убираем reply-клавиатуру (если была)
     try:
         await cb.message.answer("⌂", reply_markup=ReplyKeyboardRemove())
     except Exception:
@@ -221,7 +218,7 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
     current = await state.get_state()
     data = await state.get_data()
 
-    # --------- КЕЙТЕРИНГ ---------
+    # --------- КАЛЬЯННЫЙ КЕЙТЕРИНГ ---------
     if current == Catering.hookahs.state:
         await state.clear()
         await cb.message.edit_text(
@@ -231,13 +228,13 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
     elif current == Catering.refills.state:
         await state.set_state(Catering.hookahs)
         await cb.message.edit_text(
-            "<b>💨 Кейтеринг кальяна</b>\n\nСколько кальянов требуется?",
+            "<b>💨 Кальянный кейтеринг</b>\n\nСколько кальянов требуется?",
             parse_mode="HTML", reply_markup=count_kb("cat_h", has_back=False),
         )
     elif current == Catering.flavor.state:
         await state.set_state(Catering.refills)
         await cb.message.edit_text(
-            f"<b>💨 Кейтеринг кальяна</b>\n"
+            f"<b>💨 Кальянный кейтеринг</b>\n"
             f"Кальянов: {data.get('hookahs')}\n\n"
             f"Сколько забивок требуется?",
             parse_mode="HTML", reply_markup=count_kb("cat_r"),
@@ -245,7 +242,7 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
     elif current == Catering.address.state:
         await state.set_state(Catering.flavor)
         await cb.message.edit_text(
-            f"<b>💨 Кейтеринг кальяна</b>\n"
+            f"<b>💨 Кальянный кейтеринг</b>\n"
             f"Кальянов: {data.get('hookahs')} | Забивок: {data.get('refills')}\n\n"
             f"Напишите желаемый <b>вкус и крепость</b>.\n"
             f"Например: <i>Дыня — средняя крепость</i>",
@@ -303,7 +300,6 @@ async def cb_back(cb: CallbackQuery, state: FSMContext):
             parse_mode="HTML", reply_markup=count_kb("rent_r"),
         )
     elif current == Rental.address.state:
-        # Если забивки не выбирались — вернёмся к вопросу Да/Нет
         if not data.get("refills"):
             await state.set_state(Rental.refills_yn)
             await cb.message.edit_text(
@@ -371,18 +367,21 @@ async def show_prices(cb: CallbackQuery):
         "• Сутки — <b>2 500 ₽</b>\n"
         "• 1 забивка (вкус и крепость на ваш выбор) — <b>500 ₽</b>\n"
         "\n"
-        "💨 <b>Кейтеринг кальяна</b>\n"
+        "💨 <b>Кальянный кейтеринг</b>\n"
         "<i>В стоимость входит: 1 кальян, 1 забивка, "
         "1,5 часа работы кальянного мастера.</i>\n"
         "\n"
         "• Базовый пакет (кальян + забивка + мастер) — <b>5 000 ₽</b>\n"
         "• Каждый дополнительный кальян с забивкой — <b>+1 500 ₽</b>\n"
-        "• Каждая дополнительная забивка — <b>+500 ₽</b>\n"
+        "• Дополнительная забивка — <b>500 ₽</b>.\n"
+        "<i>Если заказ включает только один кальян, дополнительно "
+        "добавляется 1,5 часа работы кальянного мастера — "
+        "<b>3 000 ₽</b>.</i>\n"
     )
     await cb.message.edit_text(
         text, parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
         ]),
     )
     await cb.answer()
@@ -391,10 +390,10 @@ async def show_prices(cb: CallbackQuery):
 @dp.callback_query(F.data == "start:cat")
 async def start_catering(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await state.update_data(service="Кейтеринг кальяна")
+    await state.update_data(service="Кальянный кейтеринг")
     await state.set_state(Catering.hookahs)
     await cb.message.edit_text(
-        "<b>💨 Кейтеринг кальяна</b>\n\nСколько кальянов требуется?",
+        "<b>💨 Кальянный кейтеринг</b>\n\nСколько кальянов требуется?",
         parse_mode="HTML", reply_markup=count_kb("cat_h", has_back=False),
     )
     await cb.answer()
@@ -410,14 +409,14 @@ async def start_rental(cb: CallbackQuery, state: FSMContext):
     )
     await cb.answer()
 
-# ============ КЕЙТЕРИНГ ============
+# ============ КАЛЬЯННЫЙ КЕЙТЕРИНГ ============
 @dp.callback_query(Catering.hookahs, F.data.startswith("cat_h:"))
 async def cat_hookahs(cb: CallbackQuery, state: FSMContext):
     n = int(cb.data.split(":")[1])
     await state.update_data(hookahs=n)
     await state.set_state(Catering.refills)
     await cb.message.edit_text(
-        f"<b>💨 Кейтеринг кальяна</b>\n"
+        f"<b>💨 Кальянный кейтеринг</b>\n"
         f"Кальянов: {n}\n\n"
         f"Сколько забивок требуется?",
         parse_mode="HTML", reply_markup=count_kb("cat_r"),
@@ -431,7 +430,7 @@ async def cat_refills(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Catering.flavor)
     data = await state.get_data()
     await cb.message.edit_text(
-        f"<b>💨 Кейтеринг кальяна</b>\n"
+        f"<b>💨 Кальянный кейтеринг</b>\n"
         f"Кальянов: {data['hookahs']} | Забивок: {n}\n\n"
         f"Напишите желаемый <b>вкус и крепость</b>.\n"
         f"Например: <i>Дыня — средняя крепость</i>",
@@ -477,11 +476,6 @@ async def cat_name(message: Message, state: FSMContext):
         "Оставьте <b>номер телефона</b> для связи — нажмите кнопку ниже "
         "или введите вручную.",
         parse_mode="HTML", reply_markup=phone_kb(),
-    )
-    # Дополнительно покажем кнопки навигации отдельным сообщением
-    await message.answer(
-        "↩️ Можно вернуться назад или открыть меню:",
-        reply_markup=nav_kb(),
     )
 
 @dp.message(Catering.phone, F.contact)
@@ -594,10 +588,6 @@ async def rent_name(message: Message, state: FSMContext):
         "или введите вручную.",
         parse_mode="HTML", reply_markup=phone_kb(),
     )
-    await message.answer(
-        "↩️ Можно вернуться назад или открыть меню:",
-        reply_markup=nav_kb(),
-    )
 
 @dp.message(Rental.phone, F.contact)
 async def rent_phone_contact(message: Message, state: FSMContext):
@@ -622,8 +612,8 @@ async def finalize(message: Message, state: FSMContext, phone: str):
         reply_markup=ReplyKeyboardRemove(),
     )
     await message.answer(
-        "Выбери услугу:",
-        reply_markup=main_menu_kb(),
+        "Нажмите кнопку ниже, чтобы вернуться в главное меню:",
+        reply_markup=final_kb(),
     )
     await notify_admin(message, data, phone, order_id)
 
