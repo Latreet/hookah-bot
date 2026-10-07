@@ -606,7 +606,6 @@ async def finalize(message: Message, state: FSMContext, phone: str):
 
     await message.answer(
         "🎉 <b>Благодарим за заказ!</b>\n"
-        f"Номер вашей заявки: <b>#{order_id}</b>\n"
         "В ближайшее время с вами свяжутся для подтверждения.",
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
