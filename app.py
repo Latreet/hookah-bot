@@ -73,7 +73,6 @@ async def init_db():
                 status        TEXT DEFAULT 'new'
             )
         """)
-        # Добавляем новые колонки, если база была создана старой версией
         for col, typ in [("client_name", "TEXT"), ("address", "TEXT")]:
             try:
                 await db.execute(f"ALTER TABLE orders ADD COLUMN {col} {typ}")
@@ -114,9 +113,23 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💨 Кейтеринг кальяна", callback_data="start:cat")],
         [InlineKeyboardButton(text="📦 Аренда кальяна",    callback_data="start:rent")],
+        [InlineKeyboardButton(text="💰 Стоимость услуг",   callback_data="info:prices")],
     ])
 
-def count_kb(prefix: str, max_count: int = 10) -> InlineKeyboardMarkup:
+def nav_kb() -> InlineKeyboardMarkup:
+    """Кнопки навигации для текстовых шагов."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀️ Назад",         callback_data="back")],
+        [InlineKeyboardButton(text="🏠 Главное меню",  callback_data="main_menu")],
+    ])
+
+def nav_only_main() -> InlineKeyboardMarkup:
+    """Только «Главное меню» — для первого шага."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
+    ])
+
+def count_kb(prefix: str, has_back: bool = True, max_count: int = 10) -> InlineKeyboardMarkup:
     rows, row = [], []
     for i in range(1, max_count + 1):
         row.append(InlineKeyboardButton(text=str(i), callback_data=f"{prefix}:{i}"))
@@ -124,19 +137,17 @@ def count_kb(prefix: str, max_count: int = 10) -> InlineKeyboardMarkup:
             rows.append(row); row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")])
+    if has_back:
+        rows.append([InlineKeyboardButton(text="◀️ Назад",        callback_data="back")])
+    rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def yes_no_kb(prefix: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Да", callback_data=f"{prefix}:yes"),
          InlineKeyboardButton(text="❌ Нет", callback_data=f"{prefix}:no")],
-        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")],
-    ])
-
-def cancel_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")],
+        [InlineKeyboardButton(text="◀️ Назад",        callback_data="back")],
+        [InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")],
     ])
 
 def phone_kb() -> ReplyKeyboardMarkup:
@@ -184,14 +195,197 @@ async def cmd_orders(message: Message):
         lines.append(f"📞 {r['phone']} — @{r['username'] or '—'}")
         await message.answer("\n".join(lines), parse_mode="HTML")
 
-@dp.callback_query(F.data == "cancel")
-async def cb_cancel(cb: CallbackQuery, state: FSMContext):
+# ---------------- Навигация: Назад / Главное меню ----------------
+@dp.callback_query(F.data == "main_menu")
+async def cb_main_menu(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.edit_text(
-        "Заказ отменён.\n\nВыбери услугу:",
-        reply_markup=main_menu_kb(),
+    # Убираем reply-клавиатуру (если была)
+    try:
+        await cb.message.answer("⌂", reply_markup=ReplyKeyboardRemove())
+    except Exception:
+        pass
+    try:
+        await cb.message.edit_text(
+            "Выбери услугу, которую хочешь заказать:",
+            reply_markup=main_menu_kb(),
+        )
+    except Exception:
+        await cb.message.answer(
+            "Выбери услугу, которую хочешь заказать:",
+            reply_markup=main_menu_kb(),
+        )
+    await cb.answer()
+
+@dp.callback_query(F.data == "back")
+async def cb_back(cb: CallbackQuery, state: FSMContext):
+    current = await state.get_state()
+    data = await state.get_data()
+
+    # --------- КЕЙТЕРИНГ ---------
+    if current == Catering.hookahs.state:
+        await state.clear()
+        await cb.message.edit_text(
+            "Выбери услугу, которую хочешь заказать:",
+            reply_markup=main_menu_kb(),
+        )
+    elif current == Catering.refills.state:
+        await state.set_state(Catering.hookahs)
+        await cb.message.edit_text(
+            "<b>💨 Кейтеринг кальяна</b>\n\nСколько кальянов требуется?",
+            parse_mode="HTML", reply_markup=count_kb("cat_h", has_back=False),
+        )
+    elif current == Catering.flavor.state:
+        await state.set_state(Catering.refills)
+        await cb.message.edit_text(
+            f"<b>💨 Кейтеринг кальяна</b>\n"
+            f"Кальянов: {data.get('hookahs')}\n\n"
+            f"Сколько забивок требуется?",
+            parse_mode="HTML", reply_markup=count_kb("cat_r"),
+        )
+    elif current == Catering.address.state:
+        await state.set_state(Catering.flavor)
+        await cb.message.edit_text(
+            f"<b>💨 Кейтеринг кальяна</b>\n"
+            f"Кальянов: {data.get('hookahs')} | Забивок: {data.get('refills')}\n\n"
+            f"Напишите желаемый <b>вкус и крепость</b>.\n"
+            f"Например: <i>Дыня — средняя крепость</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Catering.period.state:
+        await state.set_state(Catering.address)
+        await cb.message.edit_text(
+            "Укажите <b>адрес</b>, куда требуется кейтеринг.\n"
+            "Например: <i>ул. Ленина, 15, кафе «Уют»</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Catering.name.state:
+        await state.set_state(Catering.period)
+        await cb.message.edit_text(
+            "На какое <b>время</b> оформить заказ?\n"
+            "Например: <i>сегодня 20:00</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Catering.phone.state:
+        await state.set_state(Catering.name)
+        await cb.message.edit_text(
+            "Как к вам <b>обращаться</b>?\n"
+            "Например: <i>Денис</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+
+    # --------- АРЕНДА ---------
+    elif current == Rental.hookahs.state:
+        await state.clear()
+        await cb.message.edit_text(
+            "Выбери услугу, которую хочешь заказать:",
+            reply_markup=main_menu_kb(),
+        )
+    elif current == Rental.refills_yn.state:
+        await state.set_state(Rental.hookahs)
+        await cb.message.edit_text(
+            "<b>📦 Аренда кальяна</b>\n\nСколько кальянов требуется?",
+            parse_mode="HTML", reply_markup=count_kb("rent_h", has_back=False),
+        )
+    elif current == Rental.refills.state:
+        await state.set_state(Rental.refills_yn)
+        await cb.message.edit_text(
+            f"<b>📦 Аренда кальяна</b>\n"
+            f"Кальянов: {data.get('hookahs')}\n\n"
+            f"Требуются ли забивки?",
+            parse_mode="HTML", reply_markup=yes_no_kb("rent_yn"),
+        )
+    elif current == Rental.flavor.state:
+        await state.set_state(Rental.refills)
+        await cb.message.edit_text(
+            f"<b>📦 Аренда кальяна</b>\n"
+            f"Кальянов: {data.get('hookahs')}\n\n"
+            f"Сколько забивок требуется?",
+            parse_mode="HTML", reply_markup=count_kb("rent_r"),
+        )
+    elif current == Rental.address.state:
+        # Если забивки не выбирались — вернёмся к вопросу Да/Нет
+        if not data.get("refills"):
+            await state.set_state(Rental.refills_yn)
+            await cb.message.edit_text(
+                f"<b>📦 Аренда кальяна</b>\n"
+                f"Кальянов: {data.get('hookahs')}\n\n"
+                f"Требуются ли забивки?",
+                parse_mode="HTML", reply_markup=yes_no_kb("rent_yn"),
+            )
+        else:
+            await state.set_state(Rental.flavor)
+            await cb.message.edit_text(
+                f"<b>📦 Аренда кальяна</b>\n"
+                f"Кальянов: {data.get('hookahs')} | Забивок: {data.get('refills')}\n\n"
+                f"Напишите желаемый <b>вкус и крепость</b>.\n"
+                f"Например: <i>Дыня — средняя крепость</i>",
+                parse_mode="HTML", reply_markup=nav_kb(),
+            )
+    elif current == Rental.period.state:
+        await state.set_state(Rental.address)
+        await cb.message.edit_text(
+            "Укажите <b>адрес</b>, куда требуется доставка.\n"
+            "Например: <i>ул. Ленина, 15, кв. 42</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Rental.delivery_time.state:
+        await state.set_state(Rental.period)
+        await cb.message.edit_text(
+            "Укажите <b>срок аренды</b>.\n"
+            "Например: <i>на 3 часа</i> или <i>на сутки</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Rental.name.state:
+        await state.set_state(Rental.delivery_time)
+        await cb.message.edit_text(
+            "Укажите <b>время доставки</b>.\n"
+            "Например: <i>сегодня к 19:00</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    elif current == Rental.phone.state:
+        await state.set_state(Rental.name)
+        await cb.message.edit_text(
+            "Как к вам <b>обращаться</b>?\n"
+            "Например: <i>Денис</i>",
+            parse_mode="HTML", reply_markup=nav_kb(),
+        )
+    else:
+        await state.clear()
+        await cb.message.edit_text(
+            "Выбери услугу:",
+            reply_markup=main_menu_kb(),
+        )
+    await cb.answer()
+
+# ---------------- Информация о ценах ----------------
+@dp.callback_query(F.data == "info:prices")
+async def show_prices(cb: CallbackQuery):
+    text = (
+        "💰 <b>Стоимость услуг</b>\n"
+        "\n"
+        "📦 <b>Аренда кальяна</b>\n"
+        "<i>В стоимость входит: кальян, щипцы, калауд, чаша, "
+        "одноразовые мундштуки.</i>\n"
+        "\n"
+        "• 1 час — <b>500 ₽</b>\n"
+        "• Сутки — <b>2 500 ₽</b>\n"
+        "• 1 забивка (вкус и крепость на ваш выбор) — <b>500 ₽</b>\n"
+        "\n"
+        "💨 <b>Кейтеринг кальяна</b>\n"
+        "<i>В стоимость входит: 1 кальян, 1 забивка, "
+        "1,5 часа работы кальянного мастера.</i>\n"
+        "\n"
+        "• Базовый пакет (кальян + забивка + мастер) — <b>5 000 ₽</b>\n"
+        "• Каждый дополнительный кальян с забивкой — <b>+1 500 ₽</b>\n"
+        "• Каждая дополнительная забивка — <b>+500 ₽</b>\n"
     )
-    await cb.answer("Отменено")
+    await cb.message.edit_text(
+        text, parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="main_menu")],
+        ]),
+    )
+    await cb.answer()
 
 # ---------------- Точки входа в потоки ----------------
 @dp.callback_query(F.data == "start:cat")
@@ -201,7 +395,7 @@ async def start_catering(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Catering.hookahs)
     await cb.message.edit_text(
         "<b>💨 Кейтеринг кальяна</b>\n\nСколько кальянов требуется?",
-        parse_mode="HTML", reply_markup=count_kb("cat_h"),
+        parse_mode="HTML", reply_markup=count_kb("cat_h", has_back=False),
     )
     await cb.answer()
 
@@ -212,7 +406,7 @@ async def start_rental(cb: CallbackQuery, state: FSMContext):
     await state.set_state(Rental.hookahs)
     await cb.message.edit_text(
         "<b>📦 Аренда кальяна</b>\n\nСколько кальянов требуется?",
-        parse_mode="HTML", reply_markup=count_kb("rent_h"),
+        parse_mode="HTML", reply_markup=count_kb("rent_h", has_back=False),
     )
     await cb.answer()
 
@@ -241,7 +435,7 @@ async def cat_refills(cb: CallbackQuery, state: FSMContext):
         f"Кальянов: {data['hookahs']} | Забивок: {n}\n\n"
         f"Напишите желаемый <b>вкус и крепость</b>.\n"
         f"Например: <i>Дыня — средняя крепость</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
     await cb.answer()
 
@@ -252,7 +446,7 @@ async def cat_flavor(message: Message, state: FSMContext):
     await message.answer(
         "Укажите <b>адрес</b>, куда требуется кейтеринг.\n"
         "Например: <i>ул. Ленина, 15, кафе «Уют»</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Catering.address)
@@ -262,7 +456,7 @@ async def cat_address(message: Message, state: FSMContext):
     await message.answer(
         "На какое <b>время</b> оформить заказ?\n"
         "Например: <i>сегодня 20:00</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Catering.period)
@@ -272,7 +466,7 @@ async def cat_period(message: Message, state: FSMContext):
     await message.answer(
         "Как к вам <b>обращаться</b>?\n"
         "Например: <i>Денис</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Catering.name)
@@ -283,6 +477,11 @@ async def cat_name(message: Message, state: FSMContext):
         "Оставьте <b>номер телефона</b> для связи — нажмите кнопку ниже "
         "или введите вручную.",
         parse_mode="HTML", reply_markup=phone_kb(),
+    )
+    # Дополнительно покажем кнопки навигации отдельным сообщением
+    await message.answer(
+        "↩️ Можно вернуться назад или открыть меню:",
+        reply_markup=nav_kb(),
     )
 
 @dp.message(Catering.phone, F.contact)
@@ -320,7 +519,6 @@ async def rent_yn(cb: CallbackQuery, state: FSMContext):
             parse_mode="HTML", reply_markup=count_kb("rent_r"),
         )
     else:
-        # Забивки не нужны — пропускаем шаги "вкус и крепость" и идём к адресу
         await state.update_data(refills=0, flavor="—")
         await state.set_state(Rental.address)
         await cb.message.edit_text(
@@ -328,7 +526,7 @@ async def rent_yn(cb: CallbackQuery, state: FSMContext):
             f"Кальянов: {data['hookahs']} | Забивки: нет\n\n"
             f"Укажите <b>адрес</b>, куда требуется доставка.\n"
             f"Например: <i>ул. Ленина, 15, кв. 42</i>",
-            parse_mode="HTML", reply_markup=cancel_kb(),
+            parse_mode="HTML", reply_markup=nav_kb(),
         )
     await cb.answer()
 
@@ -343,7 +541,7 @@ async def rent_refills(cb: CallbackQuery, state: FSMContext):
         f"Кальянов: {data['hookahs']} | Забивок: {n}\n\n"
         f"Напишите желаемый <b>вкус и крепость</b>.\n"
         f"Например: <i>Дыня — средняя крепость</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
     await cb.answer()
 
@@ -354,7 +552,7 @@ async def rent_flavor(message: Message, state: FSMContext):
     await message.answer(
         "Укажите <b>адрес</b>, куда требуется доставка.\n"
         "Например: <i>ул. Ленина, 15, кв. 42</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Rental.address)
@@ -364,7 +562,7 @@ async def rent_address(message: Message, state: FSMContext):
     await message.answer(
         "Укажите <b>срок аренды</b>.\n"
         "Например: <i>на 3 часа</i> или <i>на сутки</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Rental.period)
@@ -374,7 +572,7 @@ async def rent_period(message: Message, state: FSMContext):
     await message.answer(
         "Укажите <b>время доставки</b>.\n"
         "Например: <i>сегодня к 19:00</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Rental.delivery_time)
@@ -384,7 +582,7 @@ async def rent_delivery(message: Message, state: FSMContext):
     await message.answer(
         "Как к вам <b>обращаться</b>?\n"
         "Например: <i>Денис</i>",
-        parse_mode="HTML", reply_markup=cancel_kb(),
+        parse_mode="HTML", reply_markup=nav_kb(),
     )
 
 @dp.message(Rental.name)
@@ -396,6 +594,10 @@ async def rent_name(message: Message, state: FSMContext):
         "или введите вручную.",
         parse_mode="HTML", reply_markup=phone_kb(),
     )
+    await message.answer(
+        "↩️ Можно вернуться назад или открыть меню:",
+        reply_markup=nav_kb(),
+    )
 
 @dp.message(Rental.phone, F.contact)
 async def rent_phone_contact(message: Message, state: FSMContext):
@@ -405,7 +607,7 @@ async def rent_phone_contact(message: Message, state: FSMContext):
 async def rent_phone_text(message: Message, state: FSMContext):
     await finalize(message, state, message.text.strip())
 
-# ---------------- Финал + уведомление ----------------
+# ---------------- Финал ----------------
 async def finalize(message: Message, state: FSMContext, phone: str):
     data = await state.get_data()
     await state.clear()
@@ -419,7 +621,10 @@ async def finalize(message: Message, state: FSMContext, phone: str):
         parse_mode="HTML",
         reply_markup=ReplyKeyboardRemove(),
     )
-
+    await message.answer(
+        "Выбери услугу:",
+        reply_markup=main_menu_kb(),
+    )
     await notify_admin(message, data, phone, order_id)
 
 async def notify_admin(message: Message, data: dict, phone: str, order_id: int):
@@ -460,10 +665,8 @@ async def main():
     await init_db()
     await bot.delete_webhook(drop_pending_updates=True)
 
-    # Запускаем бота в фоне
     asyncio.create_task(dp.start_polling(bot))
 
-    # Поднимаем маленький веб-сервер (нужен для Back4App / health check)
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
