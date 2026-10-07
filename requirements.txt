@@ -1,4 +1,3 @@
 aiogram
 aiosqlite
-qrcode[pil]
-aiohttp-socks
+python-dotenv
