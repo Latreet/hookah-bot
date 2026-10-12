@@ -1,3 +1,7 @@
 name = "hookahclub"
 main = "worker.js"
 compatibility_date = "2026-10-12"
+
+[[kv_namespaces]]
+binding = "HOOKAH_KV"
+id = "3b55202324814416870b9c41e3b85928"
